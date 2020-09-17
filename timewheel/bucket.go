@@ -1,7 +1,7 @@
 package timewheel
 
 import (
-	// "container/heap"
+	"fmt"
 	"github.com/robfig/cron/v3"
 	"time"
 )
@@ -49,17 +49,23 @@ func (b *Bucket) Run() {
 			next = schedule.Next(now)
 			diff = next.Sub(tw.startTime)
 			num := int64(diff / tw.interval)
-			bucketNum := num % tw.wheelSize
+			// bucketNum := num % tw.wheelSize
 			// 下次执行时， timeWheel 的轮数
-			item.Cycle = num / tw.wheelSize
+			// item.Cycle = num / tw.wheelSize
+			bucketNum := num & NUMBER
+			item.Cycle = num >> BITS
 			// 下次执行时， bucket 的 index
 			item.BucketNum = int(bucketNum)
+			item.NextTime = next
+
+			fmt.Printf("-------> %+v \n", item)
+			// fmt.Println(item.Id)
 
 			if item.Repeat {
 				b.timeWheel.addTask(item)
 			}
 
-			tw.TaskQueue <- item.Id
+			// tw.TaskQueue <- item.Id
 		}
 
 		b.size -= size

@@ -11,6 +11,9 @@ import (
 const (
 	SEPARATOR = "@"
 	MAX       = 99999
+	WHEELSIZE = 64
+	NUMBER    = 63
+	BITS      = 6
 )
 
 var globalCron = cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
@@ -18,43 +21,43 @@ var globalCron = cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom
 type TimeWheel struct {
 	interval   time.Duration // 指针每隔多久往前移动一格
 	ticker     *time.Ticker
-	wheelSize  int64
-	currentPos int64
+	currentPos int
 	startTime  time.Time
 	buckets    []*Bucket
-	TaskQueue  chan string
-	exitC      chan struct{}
+	// TaskQueue  chan string
+	exitC chan struct{}
 }
 
 func New() *TimeWheel {
-	return NewTimeWheel(time.Millisecond*50, 60)
+	return newTimeWheel(time.Millisecond * 20)
 }
 
-func NewTimeWheel(interval time.Duration, wheelSize int64) *TimeWheel {
-	if interval <= time.Millisecond || wheelSize <= 0 {
-		panic(errors.New("interval and wheelSize must be greater than 0"))
+func newTimeWheel(interval time.Duration) *TimeWheel {
+	if interval <= time.Millisecond {
+		panic(errors.New("interval be greater than 0"))
 	}
 
 	tw := &TimeWheel{
 		interval:   interval,
-		wheelSize:  wheelSize,
 		currentPos: 0,
-		TaskQueue:  make(chan string, MAX),
 		exitC:      make(chan struct{}),
+		// TaskQueue:  make(chan string, MAX),
 	}
 
-	buckets := make([]*Bucket, wheelSize)
-	var i int64
-	for i = 0; i < wheelSize; i++ {
+	buckets := make([]*Bucket, WHEELSIZE)
+	var i int
+	for i = 0; i < WHEELSIZE; i++ {
 		buckets[i] = newBucket(tw)
 	}
 	tw.buckets = buckets
+
 	return tw
 }
 
 func (tw *TimeWheel) Start() {
 	tw.ticker = time.NewTicker(tw.interval)
 	tw.startTime = time.Now()
+
 	go tw.start()
 }
 
@@ -74,7 +77,8 @@ func (tw *TimeWheel) start() {
  * 核心
  */
 func (tw *TimeWheel) tickNext() {
-	bucket := tw.buckets[tw.currentPos%tw.wheelSize]
+	index := tw.currentPos & NUMBER
+	bucket := tw.buckets[index]
 	tw.currentPos += 1
 
 	// get current bucket to do tasks
@@ -92,16 +96,19 @@ func (tw *TimeWheel) AddCronTask(spec string, id string, priority int, repeat bo
 		return "", errors.New("crontab 表达式不合法")
 	}
 
-	next := schedule.Next(time.Now())
+	now := time.Now()
+	next := schedule.Next(now)
 	diff := next.Sub(tw.startTime)
 
 	num := int64(diff / tw.interval)
-	bucketNum := num % tw.wheelSize
-	cycle := num / tw.wheelSize
+
+	bucketNum := num & NUMBER
+	cycle := num >> BITS
 
 	task := &Task{
 		BucketNum: int(bucketNum),
-		LastTime:  time.Now(),
+		NextTime:  next,
+		LastTime:  now,
 		Schedule:  schedule,
 		Cycle:     cycle,
 		priority:  priority,
@@ -150,8 +157,8 @@ func (tw *TimeWheel) RemoveTaskWithCron(key string) error {
 	diff := next.Sub(tw.startTime)
 
 	num := int64(diff / tw.interval)
-	bucketNum := num % tw.wheelSize
-	cycle := num / tw.wheelSize
+	bucketNum := num & NUMBER
+	cycle := num >> BITS
 
 	task := &Task{
 		BucketNum: int(bucketNum),
